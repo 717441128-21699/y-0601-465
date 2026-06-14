@@ -4,12 +4,13 @@
  */
 
 import { Router, type Request, type Response } from 'express'
-import { store, generateId, type EquipmentType, type DamageLevel } from '../data/store.js'
+import { store, generateId, type EquipmentType, type DamageLevel, type DamageReport, type DamageItem } from '../data/store.js'
 import {
   recommendEquipmentSize,
   calculateDamageFee,
   getAvailableEquipment,
   getEquipmentInventoryStats,
+  getDamageDescription,
 } from '../services/equipmentService.js'
 
 const router = Router()
@@ -231,12 +232,13 @@ router.post('/:id/pickup', (req: Request, res: Response): void => {
 })
 
 /**
- * 归还器材
+ * 归还器材并检查损坏
  * POST /api/rentals/:id/return
+ * 请求体：{ items: [{ equipmentId, damageLevel, damageNotes }] }
  */
 router.post('/:id/return', (req: Request, res: Response): void => {
   const { id } = req.params
-  const { damageLevel } = req.body
+  const { items } = req.body
 
   const order = store.rentalOrders.find((o) => o.id === id)
 
@@ -256,24 +258,111 @@ router.post('/:id/return', (req: Request, res: Response): void => {
     return
   }
 
-  order.status = damageLevel && damageLevel !== 'none' ? 'damaged' : 'returned'
-  order.returnedAt = new Date().toISOString()
-
-  if (damageLevel) {
-    order.damageLevel = damageLevel as DamageLevel
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    res.status(400).json({
+      success: false,
+      error: '请提供损坏检查明细',
+    })
+    return
   }
 
-  for (const item of order.items) {
+  const damageItems: DamageItem[] = []
+  let totalDamageFee = 0
+  let hasDamage = false
+
+  for (const item of items) {
     const equipment = store.equipment.find((e) => e.id === item.equipmentId)
-    if (equipment) {
-      equipment.status = damageLevel && damageLevel !== 'none' ? 'damaged' : 'available'
+    if (!equipment) continue
+
+    const damageLevel = item.damageLevel as DamageLevel
+    const damageFee = calculateDamageFee(item.equipmentId, damageLevel)
+
+    const damageItem: DamageItem = {
+      equipmentId: item.equipmentId,
+      equipmentName: `${equipment.brand} ${equipment.model}`,
+      damageLevel,
+      damageNotes: item.damageNotes || '',
+      damageFee,
     }
+    damageItems.push(damageItem)
+
+    if (damageLevel !== 'none' && damageFee > 0) {
+      hasDamage = true
+      totalDamageFee += damageFee
+    }
+
+    equipment.status = damageLevel === 'severe' ? 'damaged' : damageLevel === 'moderate' ? 'maintenance' : 'available'
   }
+
+  order.status = hasDamage ? 'damaged' : 'returned'
+  order.returnedAt = new Date().toISOString()
+  order.damageFee = totalDamageFee
+  order.damageLevel = hasDamage
+    ? damageItems.some((d) => d.damageLevel === 'severe')
+      ? 'severe'
+      : damageItems.some((d) => d.damageLevel === 'moderate')
+        ? 'moderate'
+        : 'minor'
+    : 'none'
+
+  let damageReport: DamageReport | null = null
+  if (hasDamage) {
+    damageReport = {
+      id: `damage-${Date.now().toString(36)}`,
+      rentalOrderId: order.id,
+      visitorId: order.visitorId,
+      items: damageItems.filter((d) => d.damageLevel !== 'none'),
+      totalDamageFee,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    }
+    store.damageReports.push(damageReport)
+
+    store.messages.push({
+      id: generateId(),
+      userId: order.visitorId,
+      type: 'rental',
+      title: '雪具损坏赔偿通知',
+      content: `您的租赁订单${order.id}归还时发现${damageItems.filter((d) => d.damageLevel !== 'none').length}件器材损坏，需赔偿${totalDamageFee}元。请查看赔偿单详情。`,
+      read: false,
+      createdAt: new Date().toISOString(),
+      relatedId: damageReport.id,
+    })
+  } else {
+    store.messages.push({
+      id: generateId(),
+      userId: order.visitorId,
+      type: 'rental',
+      title: '雪具归还成功',
+      content: `您的租赁订单${order.id}已成功归还，器材完好无损。感谢您的使用！`,
+      read: false,
+      createdAt: new Date().toISOString(),
+      relatedId: order.id,
+    })
+  }
+
+  const itemsWithDetail = order.items.map((item) => {
+    const equipment = store.equipment.find((e) => e.id === item.equipmentId)
+    const damageItem = damageItems.find((d) => d.equipmentId === item.equipmentId)
+    return {
+      ...item,
+      equipment,
+      damageLevel: damageItem?.damageLevel || 'none',
+      damageNotes: damageItem?.damageNotes,
+      damageFee: damageItem?.damageFee || 0,
+    }
+  })
 
   res.json({
     success: true,
-    data: order,
-    message: '归还成功',
+    data: {
+      order: {
+        ...order,
+        items: itemsWithDetail,
+      },
+      damageReport,
+    },
+    message: hasDamage ? '归还成功，已生成赔偿单' : '归还成功',
   })
 })
 
@@ -292,9 +381,8 @@ router.get('/damage-calc', (req: Request, res: Response): void => {
     return
   }
 
-  const result = calculateDamageFee(equipmentId as string, damageLevel as DamageLevel)
-
-  if (!result) {
+  const equipment = store.equipment.find((e) => e.id === equipmentId)
+  if (!equipment) {
     res.status(404).json({
       success: false,
       error: '器材不存在',
@@ -302,60 +390,118 @@ router.get('/damage-calc', (req: Request, res: Response): void => {
     return
   }
 
+  const damageFee = calculateDamageFee(equipmentId as string, damageLevel as DamageLevel)
+  const description = getDamageDescription(damageLevel as DamageLevel)
+
   res.json({
     success: true,
-    data: result,
+    data: {
+      equipmentId,
+      damageLevel,
+      description,
+      damageFee,
+      equipmentValue: equipment.dailyPrice * 30,
+      dailyPrice: equipment.dailyPrice,
+    },
+  })
+})
+
+/**
+ * 获取赔偿单详情
+ * GET /api/rentals/damage-report/:id
+ */
+router.get('/damage-report/:id', (req: Request, res: Response): void => {
+  const { id } = req.params
+
+  const damageReport = store.damageReports.find((d) => d.id === id)
+
+  if (!damageReport) {
+    res.status(404).json({
+      success: false,
+      error: '赔偿单不存在',
+    })
+    return
+  }
+
+  const order = store.rentalOrders.find((o) => o.id === damageReport.rentalOrderId)
+
+  res.json({
+    success: true,
+    data: {
+      ...damageReport,
+      order,
+    },
+  })
+})
+
+/**
+ * 获取我的赔偿单
+ * GET /api/rentals/damage-reports/mine?visitorId=u001
+ */
+router.get('/damage-reports/mine', (req: Request, res: Response): void => {
+  const { visitorId } = req.query
+
+  if (!visitorId) {
+    res.status(400).json({
+      success: false,
+      error: '缺少必要参数：visitorId',
+    })
+    return
+  }
+
+  const reports = store.damageReports
+    .filter((d) => d.visitorId === visitorId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+
+  res.json({
+    success: true,
+    data: reports,
   })
 })
 
 /**
  * 支付赔偿
- * POST /api/rentals/:id/pay-damage
+ * POST /api/rentals/damage-report/:id/pay
  */
-router.post('/:id/pay-damage', (req: Request, res: Response): void => {
+router.post('/damage-report/:id/pay', (req: Request, res: Response): void => {
   const { id } = req.params
-  const { equipmentId, damageLevel } = req.body
 
-  const order = store.rentalOrders.find((o) => o.id === id)
+  const damageReport = store.damageReports.find((d) => d.id === id)
 
-  if (!order) {
+  if (!damageReport) {
     res.status(404).json({
       success: false,
-      error: '订单不存在',
+      error: '赔偿单不存在',
     })
     return
   }
 
-  const damageCalc = calculateDamageFee(equipmentId, damageLevel as DamageLevel)
-  if (!damageCalc) {
+  if (damageReport.status === 'paid') {
     res.status(400).json({
       success: false,
-      error: '赔偿计算失败',
+      error: '该赔偿单已支付',
     })
     return
   }
 
-  order.damageFee = damageCalc.finalFee
-  order.damageLevel = damageLevel as DamageLevel
+  damageReport.status = 'paid'
+  damageReport.paidAt = new Date().toISOString()
 
   store.messages.push({
     id: generateId(),
-    userId: order.visitorId,
+    userId: damageReport.visitorId,
     type: 'rental',
-    title: '损坏赔偿通知',
-    content: `您的租赁订单${id}产生损坏赔偿费${damageCalc.finalFee}元（${damageCalc.description}）。`,
+    title: '赔偿支付成功',
+    content: `您的赔偿单${damageReport.id}已支付成功，金额${damageReport.totalDamageFee}元。感谢您的配合！`,
     read: false,
     createdAt: new Date().toISOString(),
-    relatedId: id,
+    relatedId: damageReport.id,
   })
 
   res.json({
     success: true,
-    data: {
-      order,
-      damage: damageCalc,
-    },
-    message: '赔偿费用已生成',
+    data: damageReport,
+    message: '支付成功',
   })
 })
 
@@ -384,9 +530,11 @@ router.get('/mine', (req: Request, res: Response): void => {
           equipment,
         }
       })
+      const damageReport = store.damageReports.find((d) => d.rentalOrderId === o.id)
       return {
         ...o,
         items: itemsWithDetail,
+        damageReport,
       }
     })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
@@ -422,11 +570,14 @@ router.get('/:id', (req: Request, res: Response): void => {
     }
   })
 
+  const damageReport = store.damageReports.find((d) => d.rentalOrderId === order.id)
+
   res.json({
     success: true,
     data: {
       ...order,
       items: itemsWithDetail,
+      damageReport,
     },
   })
 })

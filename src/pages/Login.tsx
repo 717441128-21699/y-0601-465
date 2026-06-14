@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import {
   useAuthStore,
+  getRoleDashboardPath,
   type UserRole,
   roleLabels,
   roleDescriptions,
@@ -60,7 +61,7 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = (location.state as { from?: Location })?.from?.pathname || '/visitor/dashboard';
+  const from = (location.state as { from?: Location })?.from?.pathname;
 
   useEffect(() => {
     setMounted(true);
@@ -73,8 +74,14 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
-    await login(username, password, selectedRole);
-    navigate(from, { replace: true });
+    try {
+      await login(username, password);
+      const currentUser = useAuthStore.getState().user;
+      const targetPath = from || (currentUser ? getRoleDashboardPath(currentUser.role) : '/login');
+      navigate(targetPath, { replace: true });
+    } catch {
+      // noop
+    }
   };
 
   const handleDemoLogin = async (role: UserRole) => {
@@ -84,8 +91,14 @@ export default function Login() {
       setUsername(account.username);
       setPassword(account.password);
       setShowDemo(false);
-      await login(account.username, account.password, role);
-      navigate('/visitor/dashboard', { replace: true });
+      try {
+        await login(account.username, account.password);
+        const currentUser = useAuthStore.getState().user;
+        const targetPath = currentUser ? getRoleDashboardPath(currentUser.role) : getRoleDashboardPath(role);
+        navigate(targetPath, { replace: true });
+      } catch {
+        // noop
+      }
     }
   };
 

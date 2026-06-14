@@ -27,111 +27,113 @@ interface AuthState {
   isLoading: boolean
   error: string | null
 
-  login: (username: string, password: string, role?: UserRole) => Promise<void>
-  logout: () => void
+  login: (username: string, password: string) => Promise<void>
+  logout: () => Promise<void>
+  getCurrentUser: () => Promise<void>
   clearError: () => void
 }
 
-const demoUsers: Record<string, { user: User; token: string }> = {
-  visitor: {
-    user: {
-      id: 'v1001',
-      role: 'visitor',
-      name: '李雪晴',
-      phone: '138****1234',
-      avatar: undefined,
-    },
-    token: 'visitor-token-demo-v1001',
-  },
-  coach: {
-    user: {
-      id: 'c2001',
-      role: 'coach',
-      name: '王雪峰',
-      phone: '139****5678',
-      employeeId: 'COACH-2024-001',
-      avatar: undefined,
-    },
-    token: 'coach-token-demo-c2001',
-  },
-  rental_admin: {
-    user: {
-      id: 'r3001',
-      role: 'rental_admin',
-      name: '赵冰洁',
-      phone: '137****9012',
-      employeeId: 'RENTAL-2024-001',
-      avatar: undefined,
-    },
-    token: 'rental-token-demo-r3001',
-  },
-  manager: {
-    user: {
-      id: 'm4001',
-      role: 'manager',
-      name: '陈远山',
-      phone: '136****3456',
-      employeeId: 'MGR-2024-001',
-      avatar: undefined,
-    },
-    token: 'manager-token-demo-m4001',
-  },
-  finance: {
-    user: {
-      id: 'f5001',
-      role: 'finance',
-      name: '孙玉华',
-      phone: '135****7890',
-      employeeId: 'FIN-2024-001',
-      avatar: undefined,
-    },
-    token: 'finance-token-demo-f5001',
-  },
-}
+const API_BASE = '/api/auth'
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       token: null,
       isAuthenticated: false,
       isLoading: false,
       error: null,
 
-      login: async (username: string, password: string, _role?: UserRole) => {
+      login: async (username: string, password: string) => {
         set({ isLoading: true, error: null })
         try {
-          await new Promise((resolve) => setTimeout(resolve, 500))
+          const response = await fetch(`${API_BASE}/login`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ username, password }),
+          })
 
-          const found = demoUsers[username]
-          if (found && password === '123456') {
-            set({
-              user: found.user,
-              token: found.token,
-              isAuthenticated: true,
-              isLoading: false,
-            })
-          } else {
-            set({
-              error: '用户名或密码错误',
-              isLoading: false,
-            })
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}))
+            throw new Error(data.message || '登录失败')
           }
+
+          const data = await response.json()
+          const { user, token } = data
+
+          set({
+            user,
+            token,
+            isAuthenticated: true,
+            isLoading: false,
+          })
         } catch (err) {
           set({
             error: err instanceof Error ? err.message : '登录失败',
             isLoading: false,
           })
+          throw err
         }
       },
 
-      logout: () => {
-        set({
-          user: null,
-          token: null,
-          isAuthenticated: false,
-          error: null,
-        })
+      logout: async () => {
+        const { token } = get()
+        try {
+          await fetch(`${API_BASE}/logout`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          })
+        } catch {
+          // noop
+        } finally {
+          set({
+            user: null,
+            token: null,
+            isAuthenticated: false,
+            error: null,
+          })
+        }
+      },
+
+      getCurrentUser: async () => {
+        const { token } = get()
+        if (!token) {
+          return
+        }
+
+        set({ isLoading: true })
+        try {
+          const response = await fetch(`${API_BASE}/me`, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+          })
+
+          if (!response.ok) {
+            throw new Error('获取用户信息失败')
+          }
+
+          const data = await response.json()
+          set({
+            user: data,
+            isAuthenticated: true,
+            isLoading: false,
+          })
+        } catch {
+          set({
+            user: null,
+            token: null,
+            isAuthenticated: false,
+            isLoading: false,
+          })
+        }
       },
 
       clearError: () => {

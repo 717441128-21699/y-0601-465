@@ -1,343 +1,154 @@
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
-import type { ReactNode } from "react";
-import { useAuthStore, type UserRole } from "@/store/authStore";
-import Home from "@/pages/Home";
-import MainLayout from "@/components/layout/MainLayout";
-import CoachDashboard from "@/pages/coach/Dashboard";
-import CoachSchedule from "@/pages/coach/Schedule";
-import CoachCheckIn from "@/pages/coach/CheckIn";
-import CoachIncome from "@/pages/coach/Income";
-import RentalDashboard from "@/pages/rental/Dashboard";
-import RentalLend from "@/pages/rental/Lend";
-import RentalReturn from "@/pages/rental/Return";
-import RentalInventory from "@/pages/rental/Inventory";
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import type { ReactNode } from 'react'
+import { useAuthStore, getRoleDashboardPath, type UserRole } from '@/store/authStore'
+import MainLayout from '@/components/layout/MainLayout'
+import Login from '@/pages/Login'
+import Messages from '@/pages/Messages'
 
-interface RouteConfig {
-  path: string;
-  element: ReactNode;
-  roles?: UserRole[];
-  requiresAuth?: boolean;
-}
+import VisitorDashboard from '@/pages/visitor/Dashboard'
+import VisitorTickets from '@/pages/visitor/Tickets'
+import VisitorMyTickets from '@/pages/visitor/MyTickets'
+import VisitorCoaches from '@/pages/visitor/Coaches'
+import VisitorMyBookings from '@/pages/visitor/MyBookings'
+import VisitorRentals from '@/pages/visitor/Rentals'
+import VisitorMyRentals from '@/pages/visitor/MyRentals'
+import VisitorSlopes from '@/pages/visitor/Slopes'
+import VisitorSOS from '@/pages/visitor/SOS'
+
+import CoachDashboard from '@/pages/coach/Dashboard'
+import CoachSchedule from '@/pages/coach/Schedule'
+import CoachCheckIn from '@/pages/coach/CheckIn'
+import CoachIncome from '@/pages/coach/Income'
+
+import RentalDashboard from '@/pages/rental/Dashboard'
+import RentalLend from '@/pages/rental/Lend'
+import RentalReturn from '@/pages/rental/Return'
+import RentalInventory from '@/pages/rental/Inventory'
+
+import ManagerDashboard from '@/pages/manager/Dashboard'
+import ManagerSlopes from '@/pages/manager/Slopes'
+import ManagerRescue from '@/pages/manager/Rescue'
+
+import FinanceDashboard from '@/pages/finance/Dashboard'
+import FinanceReports from '@/pages/finance/Reports'
 
 function RequireAuth({
   children,
   allowedRoles,
 }: {
-  children: ReactNode;
-  allowedRoles?: UserRole[];
+  children: ReactNode
+  allowedRoles?: UserRole[]
 }) {
-  const { isAuthenticated, user } = useAuthStore();
-  const location = useLocation();
+  const { isAuthenticated, user } = useAuthStore()
+  const location = useLocation()
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    return <Navigate to="/login" state={{ from: location }} replace />
   }
 
   if (allowedRoles && user && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/403" replace />;
+    return <Navigate to="/403" replace />
   }
 
-  return <>{children}</>;
+  return <>{children}</>
 }
 
 function PublicOnly({ children }: { children: ReactNode }) {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, user } = useAuthStore()
 
-  if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+  if (isAuthenticated && user) {
+    return <Navigate to={getRoleDashboardPath(user.role)} replace />
   }
 
-  return <>{children}</>;
+  return <>{children}</>
 }
 
-const allRoles: UserRole[] = ["visitor", "coach", "rental_admin", "manager", "finance"];
-const coachRoles: UserRole[] = ["coach", "manager"];
-const rentalRoles: UserRole[] = ["rental_admin", "manager"];
-const managerRoles: UserRole[] = ["manager"];
+function RootRedirect() {
+  const { isAuthenticated, user } = useAuthStore()
 
-const routes: RouteConfig[] = [
-  {
-    path: "/",
-    element: <Home />,
-  },
-  {
-    path: "/login",
-    element: (
-      <PublicOnly>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">登录页面</h1>
-            <p className="text-secondary/60">登录页面 - Coming Soon</p>
-          </div>
-        </div>
-      </PublicOnly>
-    ),
-  },
-  {
-    path: "/register",
-    element: (
-      <PublicOnly>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">注册页面</h1>
-            <p className="text-secondary/60">注册页面 - Coming Soon</p>
-          </div>
-        </div>
-      </PublicOnly>
-    ),
-  },
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login" replace />
+  }
 
-  {
-    path: "/tickets",
-    element: (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-          <h1 className="text-2xl font-bold text-secondary mb-4">票务中心</h1>
-          <p className="text-secondary/60">票务中心 - Coming Soon</p>
-        </div>
+  return <Navigate to={getRoleDashboardPath(user.role)} replace />
+}
+
+const allRoles: UserRole[] = ['visitor', 'coach', 'rental_admin', 'manager', 'finance']
+const visitorRoles: UserRole[] = ['visitor']
+const coachRoles: UserRole[] = ['coach']
+const rentalRoles: UserRole[] = ['rental_admin']
+const managerRoles: UserRole[] = ['manager']
+const financeRoles: UserRole[] = ['finance']
+
+function ForbiddenPage() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-danger/20 text-center">
+        <h1 className="text-4xl font-bold text-danger mb-4">403</h1>
+        <p className="text-secondary/70 mb-4">抱歉，您没有权限访问此页面</p>
+        <button
+          onClick={() => (window.location.href = '/')}
+          className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+        >
+          返回首页
+        </button>
       </div>
-    ),
-  },
-  {
-    path: "/tickets/:id",
-    element: (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-          <h1 className="text-2xl font-bold text-secondary mb-4">票务详情</h1>
-          <p className="text-secondary/60">票务详情 - Coming Soon</p>
-        </div>
+    </div>
+  )
+}
+
+function NotFoundPage() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-warning/20 text-center">
+        <h1 className="text-4xl font-bold text-warning mb-4">404</h1>
+        <p className="text-secondary/70 mb-4">抱歉，您访问的页面不存在</p>
+        <button
+          onClick={() => (window.location.href = '/')}
+          className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+        >
+          返回首页
+        </button>
       </div>
-    ),
-  },
-
-  {
-    path: "/coaches",
-    element: (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-          <h1 className="text-2xl font-bold text-secondary mb-4">教练列表</h1>
-          <p className="text-secondary/60">教练列表 - Coming Soon</p>
-        </div>
-      </div>
-    ),
-  },
-  {
-    path: "/coaches/:id",
-    element: (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-          <h1 className="text-2xl font-bold text-secondary mb-4">教练详情</h1>
-          <p className="text-secondary/60">教练详情 - Coming Soon</p>
-        </div>
-      </div>
-    ),
-  },
-
-  {
-    path: "/equipment",
-    element: (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-          <h1 className="text-2xl font-bold text-secondary mb-4">装备租赁</h1>
-          <p className="text-secondary/60">装备租赁 - Coming Soon</p>
-        </div>
-      </div>
-    ),
-  },
-
-  {
-    path: "/orders",
-    requiresAuth: true,
-    roles: allRoles,
-    element: (
-      <RequireAuth allowedRoles={allRoles}>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">我的订单</h1>
-            <p className="text-secondary/60">我的订单 - Coming Soon</p>
-          </div>
-        </div>
-      </RequireAuth>
-    ),
-  },
-
-  {
-    path: "/profile",
-    requiresAuth: true,
-    roles: allRoles,
-    element: (
-      <RequireAuth allowedRoles={allRoles}>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">个人中心</h1>
-            <p className="text-secondary/60">个人中心 - Coming Soon</p>
-          </div>
-        </div>
-      </RequireAuth>
-    ),
-  },
-
-  {
-    path: "/messages",
-    requiresAuth: true,
-    roles: allRoles,
-    element: (
-      <RequireAuth allowedRoles={allRoles}>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">消息中心</h1>
-            <p className="text-secondary/60">消息中心 - Coming Soon</p>
-          </div>
-        </div>
-      </RequireAuth>
-    ),
-  },
-
-  {
-    path: "/admin/dashboard",
-    requiresAuth: true,
-    roles: managerRoles,
-    element: (
-      <RequireAuth allowedRoles={managerRoles}>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">
-              管理后台 - 数据概览
-            </h1>
-            <p className="text-secondary/60">数据概览 - Coming Soon</p>
-          </div>
-        </div>
-      </RequireAuth>
-    ),
-  },
-  {
-    path: "/admin/tickets",
-    requiresAuth: true,
-    roles: managerRoles,
-    element: (
-      <RequireAuth allowedRoles={managerRoles}>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">
-              管理后台 - 票务管理
-            </h1>
-            <p className="text-secondary/60">票务管理 - Coming Soon</p>
-          </div>
-        </div>
-      </RequireAuth>
-    ),
-  },
-  {
-    path: "/admin/coaches",
-    requiresAuth: true,
-    roles: managerRoles,
-    element: (
-      <RequireAuth allowedRoles={managerRoles}>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">
-              管理后台 - 教练管理
-            </h1>
-            <p className="text-secondary/60">教练管理 - Coming Soon</p>
-          </div>
-        </div>
-      </RequireAuth>
-    ),
-  },
-  {
-    path: "/admin/equipment",
-    requiresAuth: true,
-    roles: managerRoles,
-    element: (
-      <RequireAuth allowedRoles={managerRoles}>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">
-              管理后台 - 装备管理
-            </h1>
-            <p className="text-secondary/60">装备管理 - Coming Soon</p>
-          </div>
-        </div>
-      </RequireAuth>
-    ),
-  },
-  {
-    path: "/admin/users",
-    requiresAuth: true,
-    roles: managerRoles,
-    element: (
-      <RequireAuth allowedRoles={managerRoles}>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">
-              管理后台 - 用户管理
-            </h1>
-            <p className="text-secondary/60">用户管理 - Coming Soon</p>
-          </div>
-        </div>
-      </RequireAuth>
-    ),
-  },
-  {
-    path: "/admin/orders",
-    requiresAuth: true,
-    roles: managerRoles,
-    element: (
-      <RequireAuth allowedRoles={managerRoles}>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-primary/20">
-            <h1 className="text-2xl font-bold text-secondary mb-4">
-              管理后台 - 订单管理
-            </h1>
-            <p className="text-secondary/60">订单管理 - Coming Soon</p>
-          </div>
-        </div>
-      </RequireAuth>
-    ),
-  },
-
-  {
-    path: "/403",
-    element: (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-danger/20 text-center">
-          <h1 className="text-4xl font-bold text-danger mb-4">403</h1>
-          <p className="text-secondary/70 mb-4">
-            抱歉，您没有权限访问此页面
-          </p>
-          <button
-            onClick={() => (window.location.href = "/")}
-            className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
-          >
-            返回首页
-          </button>
-        </div>
-      </div>
-    ),
-  },
-  {
-    path: "*",
-    element: (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-warning/20 text-center">
-          <h1 className="text-4xl font-bold text-warning mb-4">404</h1>
-          <p className="text-secondary/70 mb-4">抱歉，您访问的页面不存在</p>
-          <button
-            onClick={() => (window.location.href = "/")}
-            className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
-          >
-            返回首页
-          </button>
-        </div>
-      </div>
-    ),
-  },
-];
+    </div>
+  )
+}
 
 export default function App() {
   return (
     <div className="relative z-10 min-h-screen">
       <Routes>
+        <Route path="/" element={<RootRedirect />} />
+
+        <Route
+          path="/login"
+          element={
+            <PublicOnly>
+              <Login />
+            </PublicOnly>
+          }
+        />
+
+        <Route
+          path="/visitor"
+          element={
+            <RequireAuth allowedRoles={visitorRoles}>
+              <MainLayout />
+            </RequireAuth>
+          }
+        >
+          <Route index element={<Navigate to="/visitor/dashboard" replace />} />
+          <Route path="dashboard" element={<VisitorDashboard />} />
+          <Route path="tickets" element={<VisitorTickets />} />
+          <Route path="tickets/mine" element={<VisitorMyTickets />} />
+          <Route path="coaches" element={<VisitorCoaches />} />
+          <Route path="coaches/my" element={<VisitorMyBookings />} />
+          <Route path="rentals" element={<VisitorRentals />} />
+          <Route path="rentals/my" element={<VisitorMyRentals />} />
+          <Route path="slopes" element={<VisitorSlopes />} />
+          <Route path="sos" element={<VisitorSOS />} />
+        </Route>
+
         <Route
           path="/coach"
           element={
@@ -346,7 +157,7 @@ export default function App() {
             </RequireAuth>
           }
         >
-          <Route index element={<CoachDashboard />} />
+          <Route index element={<Navigate to="/coach/dashboard" replace />} />
           <Route path="dashboard" element={<CoachDashboard />} />
           <Route path="schedule" element={<CoachSchedule />} />
           <Route path="checkin" element={<CoachCheckIn />} />
@@ -361,21 +172,55 @@ export default function App() {
             </RequireAuth>
           }
         >
-          <Route index element={<RentalDashboard />} />
+          <Route index element={<Navigate to="/rental/dashboard" replace />} />
           <Route path="dashboard" element={<RentalDashboard />} />
           <Route path="lend" element={<RentalLend />} />
           <Route path="return" element={<RentalReturn />} />
           <Route path="inventory" element={<RentalInventory />} />
         </Route>
 
-        {routes.map((route) => (
-          <Route
-            key={route.path}
-            path={route.path}
-            element={route.element}
-          />
-        ))}
+        <Route
+          path="/manager"
+          element={
+            <RequireAuth allowedRoles={managerRoles}>
+              <MainLayout />
+            </RequireAuth>
+          }
+        >
+          <Route index element={<Navigate to="/manager/dashboard" replace />} />
+          <Route path="dashboard" element={<ManagerDashboard />} />
+          <Route path="slopes" element={<ManagerSlopes />} />
+          <Route path="rescue" element={<ManagerRescue />} />
+        </Route>
+
+        <Route
+          path="/finance"
+          element={
+            <RequireAuth allowedRoles={financeRoles}>
+              <MainLayout />
+            </RequireAuth>
+          }
+        >
+          <Route index element={<Navigate to="/finance/dashboard" replace />} />
+          <Route path="dashboard" element={<FinanceDashboard />} />
+          <Route path="reports" element={<FinanceReports />} />
+        </Route>
+
+        <Route
+          path="/messages"
+          element={
+            <RequireAuth allowedRoles={allRoles}>
+              <MainLayout>
+                <Messages />
+              </MainLayout>
+            </RequireAuth>
+          }
+        />
+
+        <Route path="/403" element={<ForbiddenPage />} />
+
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </div>
-  );
+  )
 }

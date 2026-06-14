@@ -4,7 +4,17 @@
  */
 
 import { Router, type Request, type Response } from 'express'
-import { store, generateId, generateQRCode, type TicketType } from '../data/store.js'
+import {
+  store,
+  generateId,
+  generateQRCode,
+  generateVerifyCode,
+  type TicketType,
+  getCapacityInfo,
+  getRemainingCapacity,
+  addTicketOrder,
+  refundTicketCapacity,
+} from '../data/store.js'
 import { calculateDynamicPrice, getWeeklyPriceForecast } from '../services/pricingService.js'
 
 const router = Router()
@@ -39,6 +49,36 @@ router.get('/price', (req: Request, res: Response): void => {
     res.status(500).json({
       success: false,
       error: '计算票价失败',
+    })
+  }
+})
+
+/**
+ * 获取指定日期剩余容量
+ * GET /api/tickets/capacity?date=2026-06-15
+ */
+router.get('/capacity', (req: Request, res: Response): void => {
+  const { date } = req.query
+
+  if (!date) {
+    res.status(400).json({
+      success: false,
+      error: '缺少必要参数：date',
+    })
+    return
+  }
+
+  try {
+    const capacityInfo = getCapacityInfo(date as string)
+
+    res.json({
+      success: true,
+      data: capacityInfo,
+    })
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: '获取容量信息失败',
     })
   }
 })
@@ -79,9 +119,10 @@ router.get('/forecast', (req: Request, res: Response): void => {
 /**
  * 购买雪票
  * POST /api/tickets/purchase
+ * 请求体：{ visitorId, date, ticketType, quantity, weather }
  */
 router.post('/purchase', (req: Request, res: Response): void => {
-  const { visitorId, date, ticketType, weather } = req.body
+  const { visitorId, date, ticketType, quantity, weather } = req.body
 
   if (!visitorId || !date || !ticketType) {
     res.status(400).json({
@@ -91,11 +132,29 @@ router.post('/purchase', (req: Request, res: Response): void => {
     return
   }
 
+  const ticketQuantity = quantity || 1
+  if (ticketQuantity < 1 || ticketQuantity > 10) {
+    res.status(400).json({
+      success: false,
+      error: '购票数量必须在1-10张之间',
+    })
+    return
+  }
+
   const visitor = store.users.find((u) => u.id === visitorId)
   if (!visitor) {
     res.status(404).json({
       success: false,
       error: '用户不存在',
+    })
+    return
+  }
+
+  const remaining = getRemainingCapacity(date)
+  if (remaining < ticketQuantity) {
+    res.status(400).json({
+      success: false,
+      error: '当日雪场容量已满',
     })
     return
   }
@@ -110,20 +169,30 @@ router.post('/purchase', (req: Request, res: Response): void => {
       ticketType: ticketType as TicketType,
       basePrice: priceInfo.basePrice,
       dynamicFactor: priceInfo.dynamicFactor,
-      finalPrice: priceInfo.finalPrice,
+      finalPrice: priceInfo.finalPrice * ticketQuantity,
       qrCode: generateQRCode(),
+      verifyCode: generateVerifyCode(),
+      quantity: ticketQuantity,
       status: 'paid' as const,
       createdAt: new Date().toISOString(),
     }
 
-    store.ticketOrders.push(order)
+    const success = addTicketOrder(order, ticketQuantity)
+
+    if (!success) {
+      res.status(400).json({
+        success: false,
+        error: '当日雪场容量已满',
+      })
+      return
+    }
 
     store.messages.push({
       id: generateId(),
       userId: visitorId,
       type: 'ticket',
       title: '购票成功',
-      content: `您已成功购买${date}的${ticketType === 'adult' ? '成人票' : ticketType === 'child' ? '儿童票' : ticketType === 'senior' ? '老年票' : '半天票'}，票价${priceInfo.finalPrice}元。`,
+      content: `您已成功购买${date}的${ticketType === 'adult' ? '成人票' : ticketType === 'child' ? '儿童票' : ticketType === 'senior' ? '老年票' : '半天票'}${ticketQuantity}张，票价${priceInfo.finalPrice * ticketQuantity}元。`,
       read: false,
       createdAt: new Date().toISOString(),
       relatedId: order.id,
@@ -216,6 +285,7 @@ router.post('/:id/refund', (req: Request, res: Response): void => {
   }
 
   order.status = 'refunded'
+  refundTicketCapacity(order.date, order.quantity || 1)
 
   store.messages.push({
     id: generateId(),

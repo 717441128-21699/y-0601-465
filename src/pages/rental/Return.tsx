@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   QrCode,
   ScanLine,
@@ -15,79 +15,85 @@ import {
   DollarSign,
   ChevronDown,
   ChevronUp,
+  Download,
+  ExternalLink,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useRentalStore, calculateDamageFee, getDamageLevelLabel, getDamageLevelColor } from '@/store/rentalStore';
+import type { DamageLevel, DamageReport, RentalOrderWithDetail } from '@/store/rentalStore';
+import { useAuthStore } from '@/store/authStore';
 
 type Step = 'scan' | 'input' | 'check' | 'result';
-type DamageLevel = 'none' | 'minor' | 'moderate' | 'severe';
 
-interface ReturnItem {
-  id: string;
-  name: string;
-  code: string;
+interface ReturnCheckItem {
+  equipmentId: string;
+  equipmentName: string;
   size: string;
-  originalPrice: number;
+  dailyPrice: number;
   damageLevel: DamageLevel;
   damageNotes: string;
   photos: string[];
 }
 
-const damageLevelConfig: Record<DamageLevel, { label: string; className: string; fee: number }> = {
-  none: { label: '完好', className: 'bg-success/10 text-success border-success/30', fee: 0 },
-  minor: { label: '轻微损坏', className: 'bg-warning/10 text-warning border-warning/30', fee: 50 },
-  moderate: { label: '中度损坏', className: 'bg-orange-500/10 text-orange-600 border-orange-500/30', fee: 200 },
-  severe: { label: '严重损坏', className: 'bg-danger/10 text-danger border-danger/30', fee: 500 },
-};
-
-const mockCustomer = {
-  name: '陈思雨',
-  avatar: '陈',
-  phone: '139****2345',
-  orderNo: 'RT20250614015',
-  rentalDays: 1,
-  startDate: '2025-06-14',
-  deposit: 1500,
-};
-
-const initialItems: ReturnItem[] = [
-  { id: '1', name: '单板滑雪板', code: 'BOARD-S-023', size: '155cm', originalPrice: 2800, damageLevel: 'none', damageNotes: '', photos: [] },
-  { id: '2', name: '专业滑雪靴', code: 'BOOT-W-037', size: '38码', originalPrice: 1200, damageLevel: 'minor', damageNotes: '靴面轻微划痕', photos: [] },
-  { id: '3', name: '专业滑雪头盔', code: 'HELM-M-018', size: 'M码', originalPrice: 800, damageLevel: 'none', damageNotes: '', photos: [] },
-];
-
 export default function RentalReturn() {
   const [step, setStep] = useState<Step>('scan');
   const [bookingCode, setBookingCode] = useState('');
-  const [items, setItems] = useState<ReturnItem[]>(initialItems);
-  const [expandedItem, setExpandedItem] = useState<string | null>('2');
-  const [showDamageForm, setShowDamageForm] = useState<string | null>(null);
+  const [order, setOrder] = useState<RentalOrderWithDetail | null>(null);
+  const [checkItems, setCheckItems] = useState<ReturnCheckItem[]>([]);
+  const [expandedItem, setExpandedItem] = useState<string | null>(null);
+  const [showDamageReport, setShowDamageReport] = useState(false);
+  const [damageReport, setDamageReport] = useState<DamageReport | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const totalDamageFee = items.reduce((sum, item) => sum + damageLevelConfig[item.damageLevel].fee, 0);
-  const refundAmount = mockCustomer.deposit - totalDamageFee;
-  const hasDamage = items.some((item) => item.damageLevel !== 'none');
+  const { getRentalDetail, returnEquipment, isLoading, error, clearError } = useRentalStore();
+
+  const totalDamageFee = checkItems.reduce((sum, item) => sum + calculateDamageFee(item.dailyPrice, item.damageLevel), 0);
+  const hasDamage = checkItems.some((item) => item.damageLevel !== 'none');
 
   const handleScanSuccess = () => {
-    setStep('check');
+    setBookingCode('rental-00001');
+    fetchOrderDetail('rental-00001');
   };
 
   const handleManualSubmit = () => {
     if (bookingCode.length >= 6) {
+      fetchOrderDetail(bookingCode);
+    }
+  };
+
+  const fetchOrderDetail = async (orderId: string) => {
+    clearError();
+    await getRentalDetail(orderId);
+    const currentRental = useRentalStore.getState().currentRental;
+    if (currentRental) {
+      setOrder(currentRental);
+      const items: ReturnCheckItem[] = currentRental.items.map((item) => ({
+        equipmentId: item.equipmentId,
+        equipmentName: item.equipment ? `${item.equipment.brand} ${item.equipment.model}` : '器材',
+        size: item.size,
+        dailyPrice: item.dailyPrice,
+        damageLevel: 'none',
+        damageNotes: '',
+        photos: [],
+      }));
+      setCheckItems(items);
       setStep('check');
     }
   };
 
-  const handleDamageLevelChange = (itemId: string, level: DamageLevel) => {
-    setItems(
-      items.map((item) =>
-        item.id === itemId ? { ...item, damageLevel: level } : item
+  const handleDamageLevelChange = (equipmentId: string, level: DamageLevel) => {
+    setCheckItems(
+      checkItems.map((item) =>
+        item.equipmentId === equipmentId ? { ...item, damageLevel: level } : item
       )
     );
   };
 
-  const handleDamageNotesChange = (itemId: string, notes: string) => {
-    setItems(
-      items.map((item) =>
-        item.id === itemId ? { ...item, damageNotes: notes } : item
+  const handleDamageNotesChange = (equipmentId: string, notes: string) => {
+    setCheckItems(
+      checkItems.map((item) =>
+        item.equipmentId === equipmentId ? { ...item, damageNotes: notes } : item
       )
     );
   };
@@ -95,14 +101,73 @@ export default function RentalReturn() {
   const handleReset = () => {
     setStep('scan');
     setBookingCode('');
-    setItems(initialItems.map((i) => ({ ...i, damageLevel: 'none', damageNotes: '', photos: [] })));
+    setOrder(null);
+    setCheckItems([]);
     setExpandedItem(null);
-    setShowDamageForm(null);
+    setDamageReport(null);
+    setShowDamageReport(false);
+    clearError();
   };
 
-  const handleConfirmReturn = () => {
-    setStep('result');
+  const handleConfirmReturn = async () => {
+    if (!order) return;
+
+    setIsSubmitting(true);
+    const damageItems = checkItems.map((item) => ({
+      equipmentId: item.equipmentId,
+      damageLevel: item.damageLevel,
+      damageNotes: item.damageNotes,
+    }));
+
+    const result = await returnEquipment(order.id, damageItems);
+    setIsSubmitting(false);
+
+    if (result) {
+      setOrder(result.order);
+      setDamageReport(result.damageReport);
+      setStep('result');
+      if (result.damageReport) {
+        setShowDamageReport(true);
+      }
+    }
   };
+
+  const handleViewDetail = () => {
+    setShowDamageReport(false);
+  };
+
+  const handleDownload = () => {
+    if (!damageReport) return;
+    const content = `
+雪具损坏赔偿单
+====================
+赔偿单号：${damageReport.id}
+订单号：${damageReport.rentalOrderId}
+生成时间：${new Date(damageReport.createdAt).toLocaleString('zh-CN')}
+状态：${damageReport.status === 'paid' ? '已支付' : '待支付'}
+
+损坏明细：
+${damageReport.items.map((item, index) => `
+${index + 1}. ${item.equipmentName || item.equipmentId}
+   损坏等级：${getDamageLevelLabel(item.damageLevel)}
+   赔偿金额：¥${item.damageFee}
+   备注：${item.damageNotes || '无'}
+`).join('')}
+
+总赔偿金额：¥${damageReport.totalDamageFee}
+====================
+    `.trim();
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `赔偿单_${damageReport.id}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const damageLevels: DamageLevel[] = ['none', 'minor', 'moderate', 'severe'];
 
   return (
     <div className="animate-fade-in-up">
@@ -187,25 +252,39 @@ export default function RentalReturn() {
                     type="text"
                     value={bookingCode}
                     onChange={(e) => setBookingCode(e.target.value.toUpperCase())}
-                    placeholder="例如：RT20250614015"
+                    placeholder="例如：rental-00001"
                     className="w-full px-4 py-3.5 rounded-xl border-2 border-success/20 focus:border-success focus:outline-none text-secondary placeholder:text-secondary/30 transition-colors text-lg font-mono tracking-wider"
-                    maxLength={15}
                   />
                 </div>
+
+                {error && (
+                  <div className="mb-4 p-3 rounded-xl bg-danger/10 text-danger text-sm">
+                    {error}
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <button
                     onClick={handleManualSubmit}
-                    disabled={bookingCode.length < 6}
+                    disabled={bookingCode.length < 6 || isLoading}
                     className={cn(
                       'w-full py-3.5 rounded-xl font-semibold transition-all flex items-center justify-center gap-2',
-                      bookingCode.length >= 6
+                      bookingCode.length >= 6 && !isLoading
                         ? 'bg-gradient-to-r from-success-500 to-success-600 text-white shadow-lg shadow-success/30 hover:shadow-xl'
                         : 'bg-secondary/10 text-secondary/40 cursor-not-allowed'
                     )}
                   >
-                    查询订单
-                    <ArrowRight className="w-5 h-5" />
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        查询中...
+                      </>
+                    ) : (
+                      <>
+                        查询订单
+                        <ArrowRight className="w-5 h-5" />
+                      </>
+                    )}
                   </button>
                   <button
                     onClick={handleReset}
@@ -220,7 +299,7 @@ export default function RentalReturn() {
         </div>
       )}
 
-      {step === 'check' && (
+      {step === 'check' && order && (
         <div className="max-w-4xl mx-auto">
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-primary/10 shadow-sm p-6 mb-6">
             <div className="flex items-center justify-between mb-5">
@@ -231,22 +310,19 @@ export default function RentalReturn() {
                 <h3 className="text-lg font-bold text-secondary">租赁人信息</h3>
               </div>
               <span className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-mono">
-                {mockCustomer.orderNo}
+                {order.id}
               </span>
             </div>
 
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold text-xl shadow-md">
-                {mockCustomer.avatar}
+                {order.visitorId.charAt(0).toUpperCase()}
               </div>
               <div className="flex-1">
-                <h4 className="text-xl font-bold text-secondary mb-1">{mockCustomer.name}</h4>
+                <h4 className="text-xl font-bold text-secondary mb-1">订单 {order.id}</h4>
                 <div className="flex items-center gap-4 text-sm text-secondary/50">
-                  <span className="flex items-center gap-1">
-                    <Phone className="w-4 h-4" />
-                    {mockCustomer.phone}
-                  </span>
-                  <span>租期：{mockCustomer.rentalDays}天 ({mockCustomer.startDate})</span>
+                  <span>租期：{order.startDate}</span>
+                  <span>共 {order.items.length} 件器材</span>
                 </div>
               </div>
             </div>
@@ -260,119 +336,134 @@ export default function RentalReturn() {
                 </div>
                 <h3 className="text-lg font-bold text-secondary">器材检查清单</h3>
               </div>
-              <span className="text-sm text-secondary/50">共 {items.length} 件</span>
+              <span className="text-sm text-secondary/50">共 {checkItems.length} 件</span>
             </div>
 
             <div className="space-y-3">
-              {items.map((item) => (
-                <div
-                  key={item.id}
-                  className={cn(
-                    'rounded-xl border transition-all overflow-hidden',
-                    item.damageLevel === 'none'
-                      ? 'border-secondary/10'
-                      : 'border-warning/20 bg-warning/5'
-                  )}
-                >
+              {checkItems.map((item) => {
+                const damageFee = calculateDamageFee(item.dailyPrice, item.damageLevel);
+                const isExpanded = expandedItem === item.equipmentId;
+
+                return (
                   <div
-                    className="flex items-center gap-4 p-4 cursor-pointer"
-                    onClick={() => setExpandedItem(expandedItem === item.id ? null : item.id)}
+                    key={item.equipmentId}
+                    className={cn(
+                      'rounded-xl border transition-all overflow-hidden',
+                      item.damageLevel === 'none'
+                        ? 'border-secondary/10'
+                        : 'border-warning/20 bg-warning/5'
+                    )}
                   >
                     <div
-                      className={cn(
-                        'w-10 h-10 rounded-lg flex items-center justify-center font-bold flex-shrink-0',
-                        item.damageLevel === 'none'
-                          ? 'bg-success/10 text-success'
-                          : 'bg-warning/10 text-warning'
-                      )}
+                      className="flex items-center gap-4 p-4 cursor-pointer"
+                      onClick={() => setExpandedItem(isExpanded ? null : item.equipmentId)}
                     >
-                      {item.damageLevel === 'none' ? <Check className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold text-secondary">{item.name}</p>
-                        <span
-                          className={cn(
-                            'text-xs px-2 py-0.5 rounded-full border font-medium',
-                            damageLevelConfig[item.damageLevel].className
-                          )}
-                        >
-                          {damageLevelConfig[item.damageLevel].label}
-                        </span>
+                      <div
+                        className={cn(
+                          'w-10 h-10 rounded-lg flex items-center justify-center font-bold flex-shrink-0',
+                          item.damageLevel === 'none'
+                            ? 'bg-success/10 text-success'
+                            : 'bg-warning/10 text-warning'
+                        )}
+                      >
+                        {item.damageLevel === 'none' ? <Check className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
                       </div>
-                      <p className="text-xs text-secondary/50 font-mono mt-0.5">
-                        {item.code} · {item.size}
-                      </p>
-                    </div>
-                    {damageLevelConfig[item.damageLevel].fee > 0 && (
-                      <div className="text-right mr-2">
-                        <p className="text-sm font-semibold text-danger">
-                          +¥{damageLevelConfig[item.damageLevel].fee}
-                        </p>
-                        <p className="text-xs text-secondary/40">赔偿费</p>
-                      </div>
-                    )}
-                    {expandedItem === item.id ? (
-                      <ChevronUp className="w-5 h-5 text-secondary/40" />
-                    ) : (
-                      <ChevronDown className="w-5 h-5 text-secondary/40" />
-                    )}
-                  </div>
-
-                  {expandedItem === item.id && (
-                    <div className="px-4 pb-4 pt-2 border-t border-secondary/10">
-                      <p className="text-sm font-medium text-secondary mb-3">选择损坏程度：</p>
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {(Object.keys(damageLevelConfig) as DamageLevel[]).map((level) => (
-                          <button
-                            key={level}
-                            onClick={() => handleDamageLevelChange(item.id, level)}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-secondary">{item.equipmentName}</p>
+                          <span
                             className={cn(
-                              'px-4 py-2 rounded-xl border-2 text-sm font-medium transition-all',
-                              item.damageLevel === level
-                                ? damageLevelConfig[level].className + ' border-current'
-                                : 'border-secondary/10 text-secondary/50 hover:border-secondary/30'
+                              'text-xs px-2 py-0.5 rounded-full border font-medium',
+                              getDamageLevelColor(item.damageLevel)
                             )}
                           >
-                            {damageLevelConfig[level].label}
-                            {damageLevelConfig[level].fee > 0 && (
-                              <span className="ml-1">(¥{damageLevelConfig[level].fee})</span>
-                            )}
-                          </button>
-                        ))}
+                            {getDamageLevelLabel(item.damageLevel)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-secondary/50 font-mono mt-0.5">
+                          {item.equipmentId} · {item.size} · 日租金¥{item.dailyPrice}
+                        </p>
                       </div>
-
-                      {item.damageLevel !== 'none' && (
-                        <>
-                          <div className="mb-4">
-                            <label className="block text-sm font-medium text-secondary mb-2">
-                              损坏部位描述
-                            </label>
-                            <textarea
-                              value={item.damageNotes}
-                              onChange={(e) => handleDamageNotesChange(item.id, e.target.value)}
-                              placeholder="请详细描述损坏的具体部位和情况..."
-                              className="w-full px-4 py-3 rounded-xl border-2 border-secondary/10 focus:border-primary focus:outline-none text-secondary placeholder:text-secondary/30 transition-colors resize-none"
-                              rows={3}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-secondary mb-2">
-                              上传照片
-                            </label>
-                            <div className="flex gap-2">
-                              <button className="w-20 h-20 rounded-xl border-2 border-dashed border-secondary/20 flex flex-col items-center justify-center text-secondary/40 hover:border-primary hover:text-primary transition-colors">
-                                <Camera className="w-6 h-6 mb-1" />
-                                <span className="text-xs">上传</span>
-                              </button>
-                            </div>
-                          </div>
-                        </>
+                      {damageFee > 0 && (
+                        <div className="text-right mr-2">
+                          <p className="text-sm font-semibold text-danger">
+                            +¥{damageFee}
+                          </p>
+                          <p className="text-xs text-secondary/40">赔偿费</p>
+                        </div>
+                      )}
+                      {isExpanded ? (
+                        <ChevronUp className="w-5 h-5 text-secondary/40" />
+                      ) : (
+                        <ChevronDown className="w-5 h-5 text-secondary/40" />
                       )}
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    {isExpanded && (
+                      <div className="px-4 pb-4 pt-2 border-t border-secondary/10">
+                        <p className="text-sm font-medium text-secondary mb-3">选择损坏程度：</p>
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          {damageLevels.map((level) => {
+                            const fee = calculateDamageFee(item.dailyPrice, level);
+                            return (
+                              <button
+                                key={level}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDamageLevelChange(item.equipmentId, level);
+                                }}
+                                className={cn(
+                                  'px-4 py-2 rounded-xl border-2 text-sm font-medium transition-all',
+                                  item.damageLevel === level
+                                    ? getDamageLevelColor(level) + ' border-current'
+                                    : 'border-secondary/10 text-secondary/50 hover:border-secondary/30'
+                                )}
+                              >
+                                {getDamageLevelLabel(level)}
+                                {fee > 0 && (
+                                  <span className="ml-1">(¥{fee})</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {item.damageLevel !== 'none' && (
+                          <>
+                            <div className="mb-4">
+                              <label className="block text-sm font-medium text-secondary mb-2">
+                                损坏部位描述
+                              </label>
+                              <textarea
+                                value={item.damageNotes}
+                                onChange={(e) => handleDamageNotesChange(item.equipmentId, e.target.value)}
+                                placeholder="请详细描述损坏的具体部位和情况..."
+                                className="w-full px-4 py-3 rounded-xl border-2 border-secondary/10 focus:border-primary focus:outline-none text-secondary placeholder:text-secondary/30 transition-colors resize-none"
+                                rows={3}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-secondary mb-2">
+                                上传照片
+                              </label>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-20 h-20 rounded-xl border-2 border-dashed border-secondary/20 flex flex-col items-center justify-center text-secondary/40 hover:border-primary hover:text-primary transition-colors"
+                                >
+                                  <Camera className="w-6 h-6 mb-1" />
+                                  <span className="text-xs">上传</span>
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -386,38 +477,38 @@ export default function RentalReturn() {
 
             <div className="space-y-3">
               <div className="flex justify-between text-secondary/70">
-                <span>押金金额</span>
-                <span>¥{mockCustomer.deposit}.00</span>
+                <span>租赁费用</span>
+                <span>¥{order.totalPrice}.00</span>
               </div>
               {hasDamage && (
                 <>
                   <div className="flex justify-between text-danger">
                     <span className="flex items-center gap-1">
                       <AlertTriangle className="w-4 h-4" />
-                      损坏赔偿（{items.filter((i) => i.damageLevel !== 'none').length}件）
+                      损坏赔偿（{checkItems.filter((i) => i.damageLevel !== 'none').length}件）
                     </span>
-                    <span className="font-semibold">-¥{totalDamageFee}.00</span>
+                    <span className="font-semibold">¥{totalDamageFee}.00</span>
                   </div>
-                  {items
+                  {checkItems
                     .filter((i) => i.damageLevel !== 'none')
                     .map((item) => (
-                      <div key={item.id} className="flex justify-between text-sm text-secondary/50 pl-5">
-                        <span>· {item.name}（{damageLevelConfig[item.damageLevel].label}）</span>
-                        <span>¥{damageLevelConfig[item.damageLevel].fee}.00</span>
+                      <div key={item.equipmentId} className="flex justify-between text-sm text-secondary/50 pl-5">
+                        <span>· {item.equipmentName}（{getDamageLevelLabel(item.damageLevel)}）</span>
+                        <span>¥{calculateDamageFee(item.dailyPrice, item.damageLevel)}.00</span>
                       </div>
                     ))}
                 </>
               )}
               <div className="h-px bg-secondary/10" />
               <div className="flex justify-between items-center">
-                <span className="font-semibold text-secondary">应退金额</span>
+                <span className="font-semibold text-secondary">赔偿合计</span>
                 <span
                   className={cn(
                     'text-2xl font-bold',
-                    refundAmount >= 0 ? 'text-success' : 'text-danger'
+                    totalDamageFee > 0 ? 'text-danger' : 'text-success'
                   )}
                 >
-                  ¥{refundAmount}.00
+                  ¥{totalDamageFee}.00
                 </span>
               </div>
             </div>
@@ -432,16 +523,26 @@ export default function RentalReturn() {
             </button>
             <button
               onClick={handleConfirmReturn}
-              className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-success-500 to-success-600 text-white font-semibold shadow-lg shadow-success/30 hover:shadow-xl transition-all flex items-center justify-center gap-2"
+              disabled={isSubmitting}
+              className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-success-500 to-success-600 text-white font-semibold shadow-lg shadow-success/30 hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              <FileText className="w-5 h-5" />
-              确认归还并生成单据
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  提交中...
+                </>
+              ) : (
+                <>
+                  <FileText className="w-5 h-5" />
+                  确认归还并生成单据
+                </>
+              )}
             </button>
           </div>
         </div>
       )}
 
-      {step === 'result' && (
+      {step === 'result' && order && (
         <div className="max-w-2xl mx-auto">
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-primary/10 shadow-sm overflow-hidden">
             <div className="bg-gradient-to-br from-success-400 to-success-600 p-8 text-center text-white">
@@ -452,50 +553,59 @@ export default function RentalReturn() {
                 </div>
               </div>
               <h2 className="text-2xl font-bold mb-1">归还完成</h2>
-              <p className="text-white/80">电子赔偿单已生成</p>
+              <p className="text-white/80">
+                {damageReport ? '电子赔偿单已生成' : '器材完好，感谢使用'}
+              </p>
             </div>
 
             <div className="p-8">
-              <div className="p-4 rounded-xl bg-secondary/5 mb-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <FileText className="w-5 h-5 text-primary" />
-                  <span className="font-semibold text-secondary">赔偿单据号</span>
+              {damageReport && (
+                <div className="p-4 rounded-xl bg-secondary/5 mb-6">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FileText className="w-5 h-5 text-primary" />
+                    <span className="font-semibold text-secondary">赔偿单据号</span>
+                  </div>
+                  <p className="text-2xl font-bold text-primary font-mono">{damageReport.id}</p>
                 </div>
-                <p className="text-2xl font-bold text-primary font-mono">DM{Date.now().toString().slice(-10)}</p>
-              </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className="p-4 rounded-xl bg-secondary/5">
-                  <p className="text-sm text-secondary/50 mb-1">归还人</p>
-                  <p className="font-semibold text-secondary">{mockCustomer.name}</p>
+                  <p className="text-sm text-secondary/50 mb-1">订单号</p>
+                  <p className="font-semibold text-secondary font-mono text-sm">{order.id}</p>
                 </div>
                 <div className="p-4 rounded-xl bg-secondary/5">
                   <p className="text-sm text-secondary/50 mb-1">归还时间</p>
                   <p className="font-semibold text-secondary">{new Date().toLocaleString('zh-CN')}</p>
                 </div>
                 <div className="p-4 rounded-xl bg-secondary/5">
-                  <p className="text-sm text-secondary/50 mb-1">损坏赔偿</p>
-                  <p className="font-semibold text-danger">¥{totalDamageFee}.00</p>
+                  <p className="text-sm text-secondary/50 mb-1">器材数量</p>
+                  <p className="font-semibold text-secondary">{order.items.length} 件</p>
                 </div>
                 <div className="p-4 rounded-xl bg-secondary/5">
-                  <p className="text-sm text-secondary/50 mb-1">实退押金</p>
-                  <p className="font-semibold text-success">¥{refundAmount}.00</p>
+                  <p className="text-sm text-secondary/50 mb-1">赔偿金额</p>
+                  <p className={cn(
+                    'font-semibold',
+                    totalDamageFee > 0 ? 'text-danger' : 'text-success'
+                  )}>
+                    ¥{totalDamageFee}.00
+                  </p>
                 </div>
               </div>
 
-              {hasDamage && (
+              {hasDamage && damageReport && (
                 <div className="p-4 rounded-xl bg-warning/10 border border-warning/20 mb-6">
-                  <p className="text-sm font-medium text-warning mb-2">损坏明细：</p>
-                  <div className="space-y-1">
-                    {items
-                      .filter((i) => i.damageLevel !== 'none')
-                      .map((item) => (
-                        <div key={item.id} className="text-sm text-warning/80">
-                          · {item.name}：{damageLevelConfig[item.damageLevel].label}
+                  <p className="text-sm font-medium text-warning mb-3">损坏明细：</p>
+                  <div className="space-y-2">
+                    {damageReport.items.map((item, index) => (
+                      <div key={index} className="text-sm text-warning/80 flex justify-between">
+                        <span>
+                          · {item.equipmentName || item.equipmentId}：{getDamageLevelLabel(item.damageLevel)}
                           {item.damageNotes && `（${item.damageNotes}）`}
-                          {' '}- ¥{damageLevelConfig[item.damageLevel].fee}
-                        </div>
-                      ))}
+                        </span>
+                        <span className="font-medium">¥{item.damageFee}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -507,10 +617,111 @@ export default function RentalReturn() {
                 >
                   继续归还
                 </button>
-                <button className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white font-semibold shadow-lg shadow-primary/30 hover:shadow-xl transition-all flex items-center justify-center gap-2">
-                  <FileText className="w-5 h-5" />
-                  查看单据
-                </button>
+                {damageReport && (
+                  <button
+                    onClick={() => setShowDamageReport(true)}
+                    className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white font-semibold shadow-lg shadow-primary/30 hover:shadow-xl transition-all flex items-center justify-center gap-2"
+                  >
+                    <FileText className="w-5 h-5" />
+                    查看赔偿单
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDamageReport && damageReport && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-fade-in-up">
+            <div className="sticky top-0 bg-white border-b border-secondary/10 p-6 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold text-secondary">电子赔偿单</h3>
+                <p className="text-sm text-secondary/50 mt-1">{damageReport.id}</p>
+              </div>
+              <button
+                onClick={() => setShowDamageReport(false)}
+                className="w-9 h-9 rounded-xl hover:bg-secondary/10 flex items-center justify-center text-secondary/60 hover:text-secondary transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 rounded-xl bg-secondary/5">
+                  <p className="text-xs text-secondary/50 mb-1">订单号</p>
+                  <p className="text-sm font-medium text-secondary font-mono">{damageReport.rentalOrderId}</p>
+                </div>
+                <div className="p-3 rounded-xl bg-secondary/5">
+                  <p className="text-xs text-secondary/50 mb-1">状态</p>
+                  <p className={cn(
+                    'text-sm font-medium',
+                    damageReport.status === 'paid' ? 'text-success' : 'text-warning'
+                  )}>
+                    {damageReport.status === 'paid' ? '已支付' : '待支付'}
+                  </p>
+                </div>
+                <div className="p-3 rounded-xl bg-secondary/5">
+                  <p className="text-xs text-secondary/50 mb-1">生成时间</p>
+                  <p className="text-sm font-medium text-secondary">
+                    {new Date(damageReport.createdAt).toLocaleString('zh-CN')}
+                  </p>
+                </div>
+                <div className="p-3 rounded-xl bg-danger/10">
+                  <p className="text-xs text-secondary/50 mb-1">赔偿金额</p>
+                  <p className="text-lg font-bold text-danger">¥{damageReport.totalDamageFee}</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-semibold text-secondary mb-3">损坏明细</h4>
+                <div className="space-y-2">
+                  {damageReport.items.map((item, index) => (
+                    <div key={index} className="p-4 rounded-xl bg-secondary/5 border border-secondary/10">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <p className="font-medium text-secondary">{item.equipmentName || item.equipmentId}</p>
+                          <span className={cn(
+                            'text-xs px-2 py-0.5 rounded-full border',
+                            getDamageLevelColor(item.damageLevel)
+                          )}>
+                            {getDamageLevelLabel(item.damageLevel)}
+                          </span>
+                        </div>
+                        <p className="font-semibold text-danger">¥{item.damageFee}</p>
+                      </div>
+                      {item.damageNotes && (
+                        <p className="text-sm text-secondary/60">备注：{item.damageNotes}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-secondary/10">
+                <div className="flex justify-between items-center mb-6">
+                  <span className="font-semibold text-secondary">合计赔偿</span>
+                  <span className="text-2xl font-bold text-danger">¥{damageReport.totalDamageFee}</span>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleDownload}
+                    className="flex-1 py-3 rounded-xl border-2 border-primary/20 text-primary font-medium hover:bg-primary/5 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    下载凭证
+                  </button>
+                  <button
+                    onClick={handleViewDetail}
+                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white font-medium shadow-lg shadow-primary/30 hover:shadow-xl transition-all flex items-center justify-center gap-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    查看详情
+                  </button>
+                </div>
               </div>
             </div>
           </div>

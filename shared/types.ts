@@ -22,6 +22,8 @@ export interface TicketOrder {
   dynamicFactor: number
   finalPrice: number
   qrCode: string
+  verifyCode: string
+  quantity: number
   status: TicketStatus
   createdAt: string
 }
@@ -84,11 +86,31 @@ export interface Equipment {
 
 export type RentalStatus = 'reserved' | 'picked' | 'returned' | 'damaged'
 export type DamageLevel = 'none' | 'minor' | 'moderate' | 'severe'
+export type DamageReportStatus = 'pending' | 'paid' | 'cancelled'
 
 export interface RentalItem {
   equipmentId: string
   size: string
   dailyPrice: number
+}
+
+export interface DamageItem {
+  equipmentId: string
+  equipmentName?: string
+  damageLevel: DamageLevel
+  damageNotes?: string
+  damageFee: number
+}
+
+export interface DamageReport {
+  id: string
+  rentalOrderId: string
+  visitorId: string
+  items: DamageItem[]
+  totalDamageFee: number
+  status: DamageReportStatus
+  createdAt: string
+  paidAt?: string
 }
 
 export interface RentalOrder {

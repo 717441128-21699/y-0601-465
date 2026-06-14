@@ -194,16 +194,6 @@ export const recommendEquipmentSize = (params: SizeRecommendationParams): SizeRe
 }
 
 /**
- * 损坏赔偿系数表
- */
-const DAMAGE_COEFFICIENTS: Record<DamageLevel, number> = {
-  none: 0,
-  minor: 0.2,
-  moderate: 0.5,
-  severe: 1.0,
-}
-
-/**
  * 损坏等级描述
  */
 const DAMAGE_DESCRIPTIONS: Record<DamageLevel, string> = {
@@ -214,40 +204,47 @@ const DAMAGE_DESCRIPTIONS: Record<DamageLevel, string> = {
 }
 
 /**
- * 计算损坏赔偿金额
+ * 计算设备原价（日租金 × 30）
  */
-export interface DamageCalculationResult {
-  damageLevel: DamageLevel
-  description: string
-  equipmentValue: number
-  damageCoefficient: number
-  damageFee: number
-  depreciationRate: number
-  finalFee: number
+export const calculateEquipmentValue = (dailyPrice: number): number => {
+  return dailyPrice * 30
 }
 
+/**
+ * 计算损坏赔偿金额
+ * 赔偿规则：
+ * - 轻微损坏(minor): 设备日租金 × 3
+ * - 中度损坏(moderate): 设备原价的 20%（原价=日租金×30）
+ * - 严重损坏(severe): 设备原价的 70%
+ */
 export const calculateDamageFee = (
   equipmentId: string,
   damageLevel: DamageLevel,
-): DamageCalculationResult | null => {
+): number => {
   const equipment = store.equipment.find((e) => e.id === equipmentId)
-  if (!equipment) return null
+  if (!equipment) return 0
 
-  const equipmentValue = equipment.dailyPrice * 10
-  const coefficient = DAMAGE_COEFFICIENTS[damageLevel]
-  const depreciationRate = 0.7
-  const damageFee = Math.round(equipmentValue * coefficient)
-  const finalFee = Math.round(damageFee * depreciationRate)
+  const equipmentValue = calculateEquipmentValue(equipment.dailyPrice)
 
-  return {
-    damageLevel,
-    description: DAMAGE_DESCRIPTIONS[damageLevel],
-    equipmentValue,
-    damageCoefficient: coefficient,
-    damageFee,
-    depreciationRate,
-    finalFee,
+  switch (damageLevel) {
+    case 'none':
+      return 0
+    case 'minor':
+      return Math.round(equipment.dailyPrice * 3)
+    case 'moderate':
+      return Math.round(equipmentValue * 0.2)
+    case 'severe':
+      return Math.round(equipmentValue * 0.7)
+    default:
+      return 0
   }
+}
+
+/**
+ * 获取损坏等级描述
+ */
+export const getDamageDescription = (damageLevel: DamageLevel): string => {
+  return DAMAGE_DESCRIPTIONS[damageLevel]
 }
 
 /**

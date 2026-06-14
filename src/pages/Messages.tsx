@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import MainLayout from "@/components/layout/MainLayout";
 import {
   Bell,
@@ -17,8 +17,15 @@ import {
   Download,
   X,
   Inbox,
+  FileText,
+  DollarSign,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/store/authStore";
+import { useRentalStore } from "@/store/rentalStore";
+import type { MessageType } from "@shared/types";
 
 type MessageCategory =
   | "all"
@@ -41,7 +48,40 @@ interface Message {
   hasAttachment?: boolean;
   attachmentName?: string;
   relatedUrl?: string;
+  relatedId?: string;
+  damageFee?: number;
+  isDamageReport?: boolean;
 }
+
+const categoryTabs: { key: MessageCategory; label: string; icon: typeof Bell }[] = [
+  { key: "all", label: "全部", icon: Inbox },
+  { key: "ticket", label: "票务", icon: Ticket },
+  { key: "booking", label: "预约", icon: Calendar },
+  { key: "rental", label: "租赁", icon: Snowflake },
+  { key: "slope", label: "雪道", icon: Mountain },
+  { key: "rescue", label: "救援", icon: LifeBuoy },
+  { key: "finance", label: "财务", icon: PieChart },
+  { key: "system", label: "系统", icon: Settings },
+];
+
+const getCategoryColor = (category: Exclude<MessageCategory, "all">) => {
+  switch (category) {
+    case "ticket":
+      return "bg-primary-500/20 text-primary-400 border-primary/40";
+    case "booking":
+      return "bg-success-500/20 text-success-400 border-success/40";
+    case "rental":
+      return "bg-warning-500/20 text-warning-400 border-warning/40";
+    case "slope":
+      return "bg-cyan-500/20 text-cyan-400 border-cyan/40";
+    case "rescue":
+      return "bg-danger-500/20 text-danger-400 border-danger/40";
+    case "finance":
+      return "bg-purple-500/20 text-purple-400 border-purple/40";
+    case "system":
+      return "bg-slate-500/20 text-slate-300 border-slate/40";
+  }
+};
 
 const mockMessages: Message[] = [
   {
@@ -80,6 +120,7 @@ const mockMessages: Message[] = [
     hasAttachment: true,
     attachmentName: "租赁订单.pdf",
     relatedUrl: "/equipment",
+    relatedId: "rental-00001",
   },
   {
     id: "4",
@@ -147,40 +188,18 @@ const mockMessages: Message[] = [
   },
 ];
 
-const categoryTabs: { key: MessageCategory; label: string; icon: typeof Bell }[] = [
-  { key: "all", label: "全部", icon: Inbox },
-  { key: "ticket", label: "票务", icon: Ticket },
-  { key: "booking", label: "预约", icon: Calendar },
-  { key: "rental", label: "租赁", icon: Snowflake },
-  { key: "slope", label: "雪道", icon: Mountain },
-  { key: "rescue", label: "救援", icon: LifeBuoy },
-  { key: "finance", label: "财务", icon: PieChart },
-  { key: "system", label: "系统", icon: Settings },
-];
-
-const getCategoryColor = (category: Exclude<MessageCategory, "all">) => {
-  switch (category) {
-    case "ticket":
-      return "bg-primary-500/20 text-primary-400 border-primary/40";
-    case "booking":
-      return "bg-success-500/20 text-success-400 border-success/40";
-    case "rental":
-      return "bg-warning-500/20 text-warning-400 border-warning/40";
-    case "slope":
-      return "bg-cyan-500/20 text-cyan-400 border-cyan/40";
-    case "rescue":
-      return "bg-danger-500/20 text-danger-400 border-danger/40";
-    case "finance":
-      return "bg-purple-500/20 text-purple-400 border-purple/40";
-    case "system":
-      return "bg-slate-500/20 text-slate-300 border-slate/40";
-  }
-};
-
 export default function Messages() {
   const [activeTab, setActiveTab] = useState<MessageCategory>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>(mockMessages);
+  const { user } = useAuthStore();
+  const { damageReports, fetchDamageReports, isLoading } = useRentalStore();
+
+  useEffect(() => {
+    if (user?.id) {
+      fetchDamageReports(user.id);
+    }
+  }, [user?.id]);
 
   const filteredMessages =
     activeTab === "all"
@@ -211,6 +230,10 @@ export default function Messages() {
       );
     }
     setExpandedId(expandedId === message.id ? null : message.id);
+  };
+
+  const handleViewDamageReport = (reportId: string) => {
+    alert(`查看赔偿单: ${reportId}`);
   };
 
   return (
@@ -305,6 +328,48 @@ export default function Messages() {
           </div>
         </div>
 
+        {damageReports.length > 0 && activeTab === "rental" && (
+          <div className="rounded-2xl border border-warning/20 bg-warning/5 backdrop-blur-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertCircle className="w-5 h-5 text-warning" />
+              <h3 className="font-semibold text-white">待处理赔偿</h3>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-danger/20 text-danger">
+                {damageReports.filter(d => d.status === 'pending').length} 笔待支付
+              </span>
+            </div>
+            <div className="space-y-2">
+              {damageReports.slice(0, 3).map((report) => (
+                <div
+                  key={report.id}
+                  className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+                  onClick={() => handleViewDamageReport(report.id)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-danger/20 flex items-center justify-center">
+                      <FileText className="w-4 h-4 text-danger" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-white">赔偿单 {report.id.slice(-8)}</p>
+                      <p className="text-xs text-slate-400">
+                        订单: {report.rentalOrderId}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-danger">¥{report.totalDamageFee}</p>
+                    <p className={cn(
+                      "text-xs",
+                      report.status === 'paid' ? 'text-success' : 'text-warning'
+                    )}>
+                      {report.status === 'paid' ? '已支付' : '待支付'}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="space-y-3">
           {filteredMessages.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-slate-800/50 backdrop-blur-xl p-16 text-center">
@@ -368,6 +433,11 @@ export default function Messages() {
                             >
                               {tabConfig?.label}
                             </span>
+                            {message.isDamageReport && message.damageFee && (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-danger/20 text-danger flex-shrink-0">
+                                赔偿 ¥{message.damageFee}
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
                             <span className="text-xs text-slate-500">
@@ -401,6 +471,15 @@ export default function Messages() {
                           </pre>
                         </div>
                         <div className="flex items-center gap-3 flex-wrap">
+                          {message.relatedId && message.category === "rental" && (
+                            <button
+                              onClick={() => handleViewDamageReport(message.relatedId!)}
+                              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-warning-500 to-amber-500 text-white text-sm font-medium shadow-lg shadow-warning/30 hover:shadow-warning/50 transition-all"
+                            >
+                              <DollarSign className="w-4 h-4" />
+                              查看赔偿单
+                            </button>
+                          )}
                           {message.relatedUrl && (
                             <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white text-sm font-medium shadow-lg shadow-primary/30 hover:shadow-primary/50 transition-all">
                               <ExternalLink className="w-4 h-4" />

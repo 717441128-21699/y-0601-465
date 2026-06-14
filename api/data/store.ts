@@ -16,6 +16,9 @@ import type {
   RentalOrder,
   RentalStatus,
   DamageLevel,
+  DamageReport,
+  DamageItem,
+  DamageReportStatus,
   RescueEvent,
   RescueType,
   RescueStatus,
@@ -48,6 +51,9 @@ export type {
   RentalOrder,
   RentalStatus,
   DamageLevel,
+  DamageReport,
+  DamageItem,
+  DamageReportStatus,
   RescueEvent,
   Message,
   MessageType,
@@ -69,9 +75,63 @@ export const generateQRCode = (): string => {
   return `QR-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 }
 
+export const generateVerifyCode = (): string => {
+  return `SKI-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+}
+
 const today = new Date()
 const formatDate = (d: Date) => d.toISOString().split('T')[0]
 const formatDateTime = (d: Date) => d.toISOString().replace('T', ' ').slice(0, 19)
+
+export const MAX_DAILY_CAPACITY = 2000
+
+export const dailyCapacity: Record<string, number> = {}
+
+const initializeDailyCapacity = () => {
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(today)
+    date.setDate(date.getDate() + i)
+    const dateStr = formatDate(date)
+    const isWeekend = date.getDay() === 0 || date.getDay() === 6
+    const baseSold = isWeekend ? 1200 : 600
+    dailyCapacity[dateStr] = Math.floor(baseSold + Math.random() * 400)
+  }
+}
+
+initializeDailyCapacity()
+
+export const getRemainingCapacity = (date: string): number => {
+  const sold = dailyCapacity[date] || 0
+  return Math.max(0, MAX_DAILY_CAPACITY - sold)
+}
+
+export const getCapacityInfo = (date: string): { used: number; remaining: number; max: number; percentage: number } => {
+  const used = dailyCapacity[date] || 0
+  const remaining = Math.max(0, MAX_DAILY_CAPACITY - used)
+  const percentage = Math.round((used / MAX_DAILY_CAPACITY) * 100)
+  return {
+    used,
+    remaining,
+    max: MAX_DAILY_CAPACITY,
+    percentage,
+  }
+}
+
+export const addTicketOrder = (order: TicketOrder, quantity: number = 1): boolean => {
+  const remaining = getRemainingCapacity(order.date)
+  if (remaining < quantity) {
+    return false
+  }
+  dailyCapacity[order.date] = (dailyCapacity[order.date] || 0) + quantity
+  store.ticketOrders.push(order)
+  return true
+}
+
+export const refundTicketCapacity = (date: string, quantity: number = 1): void => {
+  if (dailyCapacity[date]) {
+    dailyCapacity[date] = Math.max(0, dailyCapacity[date] - quantity)
+  }
+}
 
 export const users: User[] = [
   {
@@ -310,6 +370,8 @@ export const ticketOrders: TicketOrder[] = [
     dynamicFactor: 1.1,
     finalPrice: 308,
     qrCode: 'TICKET-20240615-00001',
+    verifyCode: 'SKI-88234561',
+    quantity: 1,
     status: 'paid',
     createdAt: formatDateTime(new Date(today.getTime() - 2 * 24 * 3600 * 1000)),
   },
@@ -322,6 +384,8 @@ export const ticketOrders: TicketOrder[] = [
     dynamicFactor: 1.0,
     finalPrice: 180,
     qrCode: 'TICKET-20240616-00002',
+    verifyCode: 'SKI-88234562',
+    quantity: 1,
     status: 'paid',
     createdAt: formatDateTime(new Date(today.getTime() - 1 * 24 * 3600 * 1000)),
   },
@@ -334,6 +398,8 @@ export const ticketOrders: TicketOrder[] = [
     dynamicFactor: 0.9,
     finalPrice: 252,
     qrCode: 'TICKET-20240612-00003',
+    verifyCode: 'SKI-88234563',
+    quantity: 2,
     status: 'used',
     createdAt: formatDateTime(new Date(today.getTime() - 5 * 24 * 3600 * 1000)),
   },
@@ -576,6 +642,8 @@ export const messages: Message[] = [
 
 export const historicalFlow: DailyFlowData[] = dailyFlowData
 
+export const damageReports: DamageReport[] = []
+
 export interface DataStore {
   users: User[]
   coaches: Coach[]
@@ -586,6 +654,7 @@ export interface DataStore {
   ticketOrders: TicketOrder[]
   coachBookings: CoachBooking[]
   rentalOrders: RentalOrder[]
+  damageReports: DamageReport[]
   rescuers: Rescuer[]
   rescueEvents: RescueEvent[]
   inspectionRecords: InspectionRecord[]
@@ -602,6 +671,7 @@ export const dataStore: DataStore = {
   ticketOrders,
   coachBookings,
   rentalOrders,
+  damageReports,
   rescuers,
   rescueEvents,
   inspectionRecords,

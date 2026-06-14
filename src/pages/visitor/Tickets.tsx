@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Ticket,
   Calendar,
@@ -15,17 +15,18 @@ import {
   Cloud,
   CloudSnow,
   CloudRain,
+  AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-type TicketType = 'adult' | 'child' | 'senior' | 'halfday';
+import { useTicketStore, getTicketTypeName } from '@/store/ticketStore';
+import { useAuthStore } from '@/store/authStore';
+import type { TicketType } from '@shared/types';
 
 interface TicketInfo {
   id: TicketType;
   name: string;
   description: string;
   basePrice: number;
-  discount: number;
   icon: typeof Ticket;
   color: string;
 }
@@ -36,7 +37,6 @@ const ticketTypes: TicketInfo[] = [
     name: '成人票',
     description: '18-59岁成人使用，全天滑雪',
     basePrice: 380,
-    discount: 0.8,
     icon: Ticket,
     color: 'from-sky-400 to-blue-500',
   },
@@ -45,7 +45,6 @@ const ticketTypes: TicketInfo[] = [
     name: '儿童票',
     description: '4-17岁儿童使用，需成人陪同',
     basePrice: 280,
-    discount: 0.65,
     icon: Users,
     color: 'from-emerald-400 to-teal-500',
   },
@@ -54,7 +53,6 @@ const ticketTypes: TicketInfo[] = [
     name: '老人票',
     description: '60岁以上老人使用，需出示证件',
     basePrice: 280,
-    discount: 0.6,
     icon: Ticket,
     color: 'from-amber-400 to-orange-500',
   },
@@ -63,13 +61,23 @@ const ticketTypes: TicketInfo[] = [
     name: '半日票',
     description: '上午或下午4小时滑雪',
     basePrice: 260,
-    discount: 0.85,
     icon: Clock,
     color: 'from-violet-400 to-purple-500',
   },
 ];
 
 export default function Tickets() {
+  const { user } = useAuthStore();
+  const {
+    remainingCapacity,
+    isLoading,
+    error,
+    fetchCapacity,
+    purchaseTicket,
+    fetchMyTickets,
+    clearError,
+  } = useTicketStore();
+
   const [selectedDate, setSelectedDate] = useState(() => {
     const today = new Date();
     return today.toISOString().split('T')[0];
@@ -82,6 +90,7 @@ export default function Tickets() {
     halfday: 0,
   });
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successTicket, setSuccessTicket] = useState<any>(null);
 
   const weatherForecast = [
     { date: 0, day: '今天', weather: 'sunny', temp: -8 },
@@ -92,6 +101,10 @@ export default function Tickets() {
     { date: 5, day: '周六', weather: 'snowy', temp: -12 },
     { date: 6, day: '周日', weather: 'rainy', temp: -3 },
   ];
+
+  useEffect(() => {
+    fetchCapacity(selectedDate);
+  }, [selectedDate, fetchCapacity]);
 
   const getWeatherIcon = (weather: string) => {
     switch (weather) {
@@ -122,7 +135,7 @@ export default function Tickets() {
   const dynamicFactor = getDynamicFactor();
 
   const calculatePrice = (ticket: TicketInfo) => {
-    return Math.round(ticket.basePrice * ticket.discount * dynamicFactor);
+    return Math.round(ticket.basePrice * dynamicFactor);
   };
 
   const totalPrice = ticketTypes.reduce(
@@ -137,6 +150,22 @@ export default function Tickets() {
 
   const totalTickets = Object.values(quantities).reduce((a, b) => a + b, 0);
 
+  const isSoldOut = remainingCapacity ? remainingCapacity.remaining <= 0 : false;
+  const isCapacityWarning = remainingCapacity ? remainingCapacity.percentage >= 95 : false;
+  const isCapacityCaution = remainingCapacity ? remainingCapacity.percentage >= 80 && remainingCapacity.percentage < 95 : false;
+
+  const getCapacityColor = () => {
+    if (isCapacityWarning) return 'bg-danger';
+    if (isCapacityCaution) return 'bg-warning';
+    return 'bg-success';
+  };
+
+  const getCapacityTextColor = () => {
+    if (isCapacityWarning) return 'text-danger';
+    if (isCapacityCaution) return 'text-warning';
+    return 'text-success';
+  };
+
   const handleQuantityChange = (type: TicketType, delta: number) => {
     setQuantities((prev) => ({
       ...prev,
@@ -147,14 +176,55 @@ export default function Tickets() {
     }
   };
 
-  const handlePurchase = () => {
-    if (totalTickets === 0) return;
-    setShowSuccess(true);
+  const handlePurchase = async () => {
+    if (totalTickets === 0 || !user || isSoldOut) return;
+
+    const primaryType = (Object.entries(quantities) as [TicketType, number][])
+      .find(([, qty]) => qty > 0)?.[0] || 'adult';
+
+    const result = await purchaseTicket({
+      visitorId: user.id,
+      date: selectedDate,
+      ticketType: primaryType,
+      quantity: totalTickets,
+    });
+
+    if (result) {
+      setSuccessTicket(result);
+      setShowSuccess(true);
+      if (user) {
+        fetchMyTickets(user.id);
+      }
+    }
+  };
+
+  const handleCloseSuccess = () => {
+    setShowSuccess(false);
+    setSuccessTicket(null);
+    setQuantities({
+      adult: 1,
+      child: 0,
+      senior: 0,
+      halfday: 0,
+    });
   };
 
   return (
     <div className="space-y-6">
-      {showSuccess ? (
+      {error && (
+        <div className="bg-danger/10 border border-danger/20 rounded-2xl p-4 flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-danger flex-shrink-0" />
+          <p className="text-danger text-sm">{error}</p>
+          <button
+            onClick={clearError}
+            className="ml-auto text-danger/70 hover:text-danger text-sm"
+          >
+            关闭
+          </button>
+        </div>
+      )}
+
+      {showSuccess && successTicket ? (
         <div className="bg-white/70 backdrop-blur-xl rounded-3xl p-8 md:p-12 border border-white/60 shadow-xl text-center">
           <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-success-400 to-emerald-500 flex items-center justify-center mb-6 shadow-lg shadow-success/30">
             <Check className="w-12 h-12 text-white" />
@@ -167,7 +237,7 @@ export default function Tickets() {
               <div>
                 <p className="text-sm text-secondary/50">雪域智慧滑雪场</p>
                 <p className="font-bold text-secondary text-lg">
-                  {ticketTypes.find((t) => quantities[t.id] > 0)?.name}
+                  {getTicketTypeName(successTicket.ticketType)}
                 </p>
               </div>
               <Ticket className="w-10 h-10 text-primary" />
@@ -180,23 +250,27 @@ export default function Tickets() {
             <div className="text-center">
               <p className="text-xs text-secondary/50 mb-1">核销码</p>
               <p className="font-mono font-bold text-lg text-secondary tracking-wider">
-                SKI-{Date.now().toString().slice(-8)}
+                {successTicket.verifyCode}
               </p>
             </div>
 
             <div className="mt-4 pt-4 border-t border-dashed border-secondary/20 flex justify-between text-sm">
               <span className="text-secondary/50">使用日期</span>
-              <span className="font-medium text-secondary">{selectedDate}</span>
+              <span className="font-medium text-secondary">{successTicket.date}</span>
             </div>
             <div className="mt-2 flex justify-between text-sm">
               <span className="text-secondary/50">数量</span>
-              <span className="font-medium text-secondary">{totalTickets} 张</span>
+              <span className="font-medium text-secondary">{successTicket.quantity} 张</span>
+            </div>
+            <div className="mt-2 flex justify-between text-sm">
+              <span className="text-secondary/50">订单号</span>
+              <span className="font-mono text-secondary">{successTicket.qrCode}</span>
             </div>
           </div>
 
           <div className="flex gap-3 justify-center">
             <button
-              onClick={() => setShowSuccess(false)}
+              onClick={handleCloseSuccess}
               className="px-6 py-3 rounded-xl border border-secondary/20 text-secondary hover:bg-secondary/5 transition-colors flex items-center gap-2"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -280,6 +354,59 @@ export default function Tickets() {
             </div>
           </div>
 
+          <div className="bg-white/70 backdrop-blur-xl rounded-3xl p-6 border border-white/60 shadow-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-secondary flex items-center gap-2">
+                <Users className="w-5 h-5 text-primary" />
+                今日容量
+              </h2>
+              {isSoldOut ? (
+                <span className="px-3 py-1 rounded-full bg-danger/10 text-danger text-sm font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-4 h-4" />
+                  已售罄
+                </span>
+              ) : isCapacityWarning ? (
+                <span className="px-3 py-1 rounded-full bg-danger/10 text-danger text-sm font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-4 h-4" />
+                  即将售罄
+                </span>
+              ) : isCapacityCaution ? (
+                <span className="px-3 py-1 rounded-full bg-warning/10 text-warning text-sm font-medium flex items-center gap-1">
+                  <Sparkles className="w-4 h-4" />
+                  紧张
+                </span>
+              ) : (
+                <span className="px-3 py-1 rounded-full bg-success/10 text-success text-sm font-medium flex items-center gap-1">
+                  <Check className="w-4 h-4" />
+                  充足
+                </span>
+              )}
+            </div>
+
+            <div className="mb-3">
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-secondary/60">已售</span>
+                <span className={cn('font-medium', getCapacityTextColor())}>
+                  {remainingCapacity?.used || 0} / {remainingCapacity?.max || 2000}
+                </span>
+              </div>
+              <div className="h-3 bg-secondary/10 rounded-full overflow-hidden">
+                <div
+                  className={cn('h-full rounded-full transition-all duration-500', getCapacityColor())}
+                  style={{ width: `${remainingCapacity?.percentage || 0}%` }}
+                />
+              </div>
+            </div>
+
+            <p className="text-xs text-secondary/50">
+              {isSoldOut
+                ? '今日雪票已全部售罄，请选择其他日期'
+                : isCapacityWarning
+                ? `仅剩 ${remainingCapacity?.remaining || 0} 张，欲购从速！`
+                : `剩余 ${remainingCapacity?.remaining || 0} 张可供购买`}
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {ticketTypes.map((ticket) => {
               const Icon = ticket.icon;
@@ -341,7 +468,7 @@ export default function Tickets() {
                             e.stopPropagation();
                             handleQuantityChange(ticket.id, -1);
                           }}
-                          disabled={quantities[ticket.id] === 0}
+                          disabled={quantities[ticket.id] === 0 || isSoldOut}
                           className="w-9 h-9 rounded-xl bg-secondary/10 flex items-center justify-center text-secondary hover:bg-secondary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <span className="text-lg font-bold leading-none">−</span>
@@ -354,7 +481,7 @@ export default function Tickets() {
                             e.stopPropagation();
                             handleQuantityChange(ticket.id, 1);
                           }}
-                          disabled={quantities[ticket.id] === 10}
+                          disabled={quantities[ticket.id] === 10 || isSoldOut}
                           className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary hover:bg-primary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <span className="text-lg font-bold leading-none">+</span>
@@ -388,11 +515,16 @@ export default function Tickets() {
               </div>
               <button
                 onClick={handlePurchase}
-                disabled={totalTickets === 0}
-                className="px-8 py-3.5 rounded-2xl bg-gradient-to-r from-primary-500 via-primary-600 to-cyan-500 text-white font-semibold shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                disabled={totalTickets === 0 || isSoldOut || isLoading}
+                className={cn(
+                  'px-8 py-3.5 rounded-2xl font-semibold shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100',
+                  isSoldOut
+                    ? 'bg-secondary/20 text-secondary/50 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-primary-500 via-primary-600 to-cyan-500 text-white shadow-primary/30 hover:shadow-primary/40'
+                )}
               >
                 <ShoppingCart className="w-5 h-5" />
-                立即购买
+                {isSoldOut ? '今日已售罄' : isLoading ? '购买中...' : '立即购买'}
               </button>
             </div>
           </div>

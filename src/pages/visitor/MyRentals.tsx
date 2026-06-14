@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Snowflake,
   Calendar,
@@ -11,94 +11,23 @@ import {
   AlertCircle,
   CalendarCheck,
   RefreshCw,
+  FileText,
+  DollarSign,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useRentalStore, getDamageLevelLabel, getDamageLevelColor } from '@/store/rentalStore';
+import { useAuthStore } from '@/store/authStore';
+import type { RentalOrderWithDetail, DamageReport } from '@/store/rentalStore';
+import type { RentalStatus, DamageLevel } from '@shared/types';
 
-type RentalStatus = 'reserved' | 'picked' | 'returned' | 'damaged';
-
-interface RentalItem {
-  id: string;
-  name: string;
-  brand: string;
-  size: string;
-  dailyPrice: number;
-}
-
-interface Rental {
-  id: string;
-  items: RentalItem[];
-  status: RentalStatus;
-  startDate: string;
-  endDate: string;
-  totalPrice: number;
-  pickedAt?: string;
-  returnedAt?: string;
-  damageFee?: number;
-  damageLevel?: 'none' | 'minor' | 'moderate' | 'severe';
-  damageNotes?: string;
-  qrCode: string;
-}
-
-const mockRentals: Rental[] = [
-  {
-    id: 'RENTAL-001',
-    items: [
-      { id: 'i1', name: '单板', brand: 'Burton', size: '155cm', dailyPrice: 120 },
-      { id: 'i2', name: '头盔', brand: 'Giro', size: 'M', dailyPrice: 30 },
-      { id: 'i3', name: '雪靴', brand: 'Burton', size: '42', dailyPrice: 60 },
-    ],
-    status: 'picked',
-    startDate: '2024-06-15',
-    endDate: '2024-06-15',
-    totalPrice: 210,
-    pickedAt: '2024-06-15 09:30',
-    qrCode: 'RENTAL-20240615-0001',
-  },
-  {
-    id: 'RENTAL-002',
-    items: [
-      { id: 'i4', name: '双板', brand: 'Atomic', size: '165cm', dailyPrice: 150 },
-      { id: 'i5', name: '雪服', brand: 'The North Face', size: 'L', dailyPrice: 50 },
-    ],
-    status: 'reserved',
-    startDate: '2024-06-16',
-    endDate: '2024-06-16',
-    totalPrice: 200,
-    qrCode: 'RENTAL-20240616-0002',
-  },
-  {
-    id: 'RENTAL-003',
-    items: [
-      { id: 'i6', name: '双板', brand: 'Head', size: '170cm', dailyPrice: 180 },
-      { id: 'i7', name: '头盔', brand: 'Smith', size: 'L', dailyPrice: 40 },
-    ],
-    status: 'returned',
-    startDate: '2024-06-10',
-    endDate: '2024-06-10',
-    totalPrice: 220,
-    pickedAt: '2024-06-10 08:45',
-    returnedAt: '2024-06-10 17:20',
-    qrCode: 'RENTAL-20240610-0003',
-  },
-  {
-    id: 'RENTAL-004',
-    items: [
-      { id: 'i8', name: '单板', brand: 'K2', size: '150cm', dailyPrice: 130 },
-    ],
-    status: 'damaged',
-    startDate: '2024-06-08',
-    endDate: '2024-06-08',
-    totalPrice: 130,
-    pickedAt: '2024-06-08 09:15',
-    returnedAt: '2024-06-08 16:30',
-    damageFee: 200,
-    damageLevel: 'minor',
-    damageNotes: '板边有轻微划痕',
-    qrCode: 'RENTAL-20240608-0004',
-  },
-];
-
-const statusConfig = {
+const statusConfig: Record<RentalStatus, {
+  label: string;
+  color: string;
+  bg: string;
+  border: string;
+  icon: typeof Calendar;
+}> = {
   reserved: {
     label: '待领取',
     color: 'text-primary',
@@ -132,6 +61,14 @@ const statusConfig = {
 export default function MyRentals() {
   const [activeTab, setActiveTab] = useState<'all' | RentalStatus>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { user } = useAuthStore();
+  const { rentals, fetchMyRentals, isLoading, error } = useRentalStore();
+
+  useEffect(() => {
+    if (user?.id) {
+      fetchMyRentals(user.id);
+    }
+  }, [user?.id]);
 
   const tabs = [
     { key: 'all' as const, label: '全部' },
@@ -141,9 +78,16 @@ export default function MyRentals() {
     { key: 'damaged' as const, label: '有损坏' },
   ];
 
-  const filteredRentals = mockRentals.filter((r) =>
+  const filteredRentals = rentals.filter((r) =>
     activeTab === 'all' ? true : r.status === activeTab
   );
+
+  const getEquipmentName = (item: RentalOrderWithDetail['items'][0]) => {
+    if (item.equipment) {
+      return `${item.equipment.brand} ${item.equipment.model}`;
+    }
+    return item.equipmentId;
+  };
 
   return (
     <div className="space-y-6">
@@ -166,7 +110,27 @@ export default function MyRentals() {
         </div>
       </div>
 
-      {filteredRentals.length === 0 ? (
+      {isLoading && (
+        <div className="bg-white/70 backdrop-blur-xl rounded-3xl p-12 border border-white/60 shadow-lg text-center">
+          <Loader2 className="w-10 h-10 text-primary mx-auto mb-4 animate-spin" />
+          <p className="text-secondary/60">加载中...</p>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-danger/10 rounded-3xl p-6 border border-danger/20 text-center">
+          <AlertCircle className="w-10 h-10 text-danger mx-auto mb-3" />
+          <p className="text-danger">{error}</p>
+          <button
+            onClick={() => user?.id && fetchMyRentals(user.id)}
+            className="mt-4 px-4 py-2 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+          >
+            重新加载
+          </button>
+        </div>
+      )}
+
+      {!isLoading && !error && filteredRentals.length === 0 ? (
         <div className="bg-white/70 backdrop-blur-xl rounded-3xl p-12 border border-white/60 shadow-lg text-center">
           <div className="w-20 h-20 mx-auto rounded-full bg-secondary/5 flex items-center justify-center mb-4">
             <Package className="w-10 h-10 text-secondary/30" />
@@ -180,6 +144,8 @@ export default function MyRentals() {
             const status = statusConfig[rental.status];
             const StatusIcon = status.icon;
             const isExpanded = expandedId === rental.id;
+            const hasDamage = rental.status === 'damaged' || rental.damageFee;
+            const damageReport = rental.damageReport;
 
             return (
               <div
@@ -204,7 +170,7 @@ export default function MyRentals() {
                         <Snowflake className="w-7 h-7 text-white" />
                       </div>
                       <div>
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <h3 className="font-bold text-lg text-secondary">租赁订单 #{rental.id.slice(-4)}</h3>
                           <span
                             className={cn(
@@ -217,6 +183,12 @@ export default function MyRentals() {
                             <StatusIcon className="w-3 h-3" />
                             {status.label}
                           </span>
+                          {hasDamage && (
+                            <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-danger/10 text-danger border border-danger/20">
+                              <DollarSign className="w-3 h-3" />
+                              损坏赔偿 ¥{rental.damageFee}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 text-sm text-secondary/60">
                           <CalendarCheck className="w-4 h-4" />
@@ -247,13 +219,13 @@ export default function MyRentals() {
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
-                    {rental.items.map((item) => (
+                    {rental.items.map((item, index) => (
                       <span
-                        key={item.id}
+                        key={index}
                         className="px-3 py-1 rounded-xl bg-secondary/5 text-secondary/70 text-sm flex items-center gap-1"
                       >
                         <Package className="w-3.5 h-3.5" />
-                        {item.name} {item.size}
+                        {getEquipmentName(item)} {item.size}
                       </span>
                     ))}
                     <span className="px-3 py-1 rounded-xl bg-primary/5 text-primary/70 text-sm">
@@ -274,7 +246,7 @@ export default function MyRentals() {
                         </div>
                         <div className="text-center sm:text-left">
                           <p className="font-mono font-bold text-lg text-secondary tracking-wider mb-2">
-                            {rental.qrCode}
+                            {rental.id}
                           </p>
                           <p className="text-sm text-secondary/60 mb-3">
                             请在雪具大厅租赁处出示此二维码领取装备
@@ -334,35 +306,67 @@ export default function MyRentals() {
                       </div>
                     )}
 
-                    {rental.status === 'damaged' && (
+                    {rental.status === 'damaged' && damageReport && (
                       <div className="p-4 rounded-2xl bg-gradient-to-br from-danger/5 to-rose-50 border border-danger/20">
-                        <div className="flex items-center gap-2 mb-2">
+                        <div className="flex items-center gap-2 mb-3">
                           <AlertCircle className="w-5 h-5 text-danger" />
                           <span className="font-medium text-secondary">
-                            装备损坏，需支付维修费 ¥{rental.damageFee}
+                            装备损坏，需支付赔偿费 ¥{damageReport.totalDamageFee}
                           </span>
                         </div>
-                        <p className="text-sm text-secondary/60 mb-3">
-                          损坏程度：
-                          <span className={cn(
-                            'font-medium ml-1',
-                            rental.damageLevel === 'minor' && 'text-warning',
-                            rental.damageLevel === 'moderate' && 'text-warning',
-                            rental.damageLevel === 'severe' && 'text-danger'
-                          )}>
-                            {rental.damageLevel === 'minor' ? '轻微' : rental.damageLevel === 'moderate' ? '中等' : '严重'}
-                          </span>
-                        </p>
-                        <p className="text-sm text-secondary/60">
-                          备注：{rental.damageNotes}
-                        </p>
+
+                        <div className="space-y-2 mb-4">
+                          {damageReport.items.map((item, index) => (
+                            <div
+                              key={index}
+                              className="flex items-center justify-between p-3 rounded-xl bg-white/50"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={cn(
+                                    'text-xs px-2 py-0.5 rounded-full border',
+                                    getDamageLevelColor(item.damageLevel)
+                                  )}
+                                >
+                                  {getDamageLevelLabel(item.damageLevel)}
+                                </span>
+                                <span className="text-sm text-secondary">
+                                  {item.equipmentName || item.equipmentId}
+                                </span>
+                              </div>
+                              <span className="font-medium text-danger">¥{item.damageFee}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {rental.damageNotes && (
+                          <p className="text-sm text-secondary/60 mb-3">
+                            备注：{rental.damageNotes}
+                          </p>
+                        )}
+
+                        <div className="flex items-center justify-between pt-3 border-t border-danger/10">
+                          <div>
+                            <p className="text-xs text-secondary/50">赔偿单状态</p>
+                            <p className={cn(
+                              'text-sm font-medium',
+                              damageReport.status === 'paid' ? 'text-success' : 'text-warning'
+                            )}>
+                              {damageReport.status === 'paid' ? '已支付' : '待支付'}
+                            </p>
+                          </div>
+                          <button className="px-4 py-2 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white text-sm font-medium shadow-lg shadow-primary/30 hover:shadow-xl transition-all flex items-center gap-2">
+                            <FileText className="w-4 h-4" />
+                            查看赔偿单
+                          </button>
+                        </div>
                       </div>
                     )}
 
                     <div className="space-y-2">
-                      {rental.items.map((item) => (
+                      {rental.items.map((item, index) => (
                         <div
-                          key={item.id}
+                          key={index}
                           className="flex items-center justify-between p-3 rounded-xl bg-secondary/5"
                         >
                           <div className="flex items-center gap-3">
@@ -371,7 +375,7 @@ export default function MyRentals() {
                             </div>
                             <div>
                               <p className="font-medium text-secondary">
-                                {item.brand} {item.name}
+                                {getEquipmentName(item)}
                               </p>
                               <p className="text-xs text-secondary/50">{item.size}</p>
                             </div>
